@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+  <setting id="resolution" type="enum" label="32001" default="480p" values="480p|720p|1080p"/>
+</settings>

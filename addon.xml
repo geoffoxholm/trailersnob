@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.video.trailersnob"
+       name="Trailer Snob"
+       version="0.0.1"
+       provider-name="Geoff Oxholm">
+  <requires>
+    <import addon="xbmc.python" version="1.0"/>
+    <import addon="plugin.video.hdtrailers_net" />
+  </requires>
+  <extension point="xbmc.python.pluginsource"
+            library="default.py">
+        <provides>video</provides>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <platform>all</platform>
+    <summary lang="en">Allows you to re-scrape for a movie's trailer</summary>
+    <description lang="en">Trailer Snob lists your movies and allows you to set the trailer you wish to associate with it.</description>
+  </extension>
+</addon>
