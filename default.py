@@ -2,23 +2,34 @@ import sys, os
 import xbmc, xbmcgui, xbmcaddon, xbmcplugin
 import unicodedata
 import urllib
+from urlparse import parse_qs
 import re
 import json
-
+from xbmcswift2 import Plugin
 import datetime
 
 #from lib import scraper
 
 from lib import scraper
 
-__addonid__ =     'plugin.video.trailerupdater'
+__addonid__ =     'plugin.video.trailersnob'
 __addon__ =       xbmcaddon.Addon(id=__addonid__)
 __addonname__ =   __addon__.getAddonInfo('name')
 __scriptdebug__ = True
 __handle__ =      int(sys.argv[1])
 
+def enum(*sequential, **named):
+    enums = dict(zip(sequential, range(len(sequential))), **named)
+    return type('Enum', (), enums)
 
-def sendRequest(method, params = None):
+TASKS = enum('ALL', 'MISSING', 'BAD', 'LAME', 'SHOW_MOVIE')
+TASK = "task"
+MOVIE_ID = "movieid"
+
+plugin = Plugin()
+
+
+def send_request(method, params = None):
     HEADERS = {'content-type' : 'application/json'}
     data = {"method"  : method,
             "jsonrpc" : "2.0",
@@ -26,27 +37,16 @@ def sendRequest(method, params = None):
     if params is not None:
         data["params"] = params
 
+    print json.dumps(data)
+
     return eval(xbmc.executeJSONRPC( json.dumps(data) ))
 
-def tryURL(url):
-    tree = scraper.__get_tree(url)
-    result = tree.find("meta", attrs = {"http-equiv":"refresh"})
-    if result:
-        wait,text=result["content"].split(";")
-        if text.lower().startswith("url="):
-            url=text[4:]
-            return url
-    return url
 
 def clean(title):
     return title.replace(" ", "-").lower()
-    # movie_id = title.replace(" ", "-").lower() + "/"
-    # url = scraper.MAIN_URL + 'movie/%s' % movie_id
-    # url = tryURL(url)
-    # return os.path.basename(os.path.dirname(url))
 
+# Modify the HD Trailers.net scraper to follow redirects
 get_tree_original = scraper.__get_tree
-
 def get_tree_new(url, tries = 0):
     print "__get_tree(%s)" % url
 
@@ -62,25 +62,128 @@ def get_tree_new(url, tries = 0):
             return get_tree_new(url, tries + 1)
     else:
         return tree
-
-def log(message):
-    xbmc.log("%s: %s" % (__addonid__, message))
-
 scraper.__get_tree = get_tree_new
 
-movies = sendRequest("VideoLibrary.GetMovies")["result"]["movies"]
+@plugin.route('/')
+def root_menu():
+    items = [
+        {'label':"All Movies",
+         'path': plugin.url_for('all_menu')}
+        ]
+    return plugin.finish(items)
 
-resolutions = ["480p", "720p", "1080p"]
-resolution = resolutions[int(__addon__.getSetting("resolution"))]
+def list_movies(movies):
+    items = []
+    for movie in movies:
+        items.append( {'label': movie["label"],
+                       'path' : plugin.url_for('movie_menu', movie_id = "%d" % movie[MOVIE_ID])} )
+        print movie[MOVIE_ID]
+    return plugin.finish(items)
+
+@plugin.route('/all_movies/')
+def all_menu():
+    list_movies(send_request("VideoLibrary.GetMovies")["result"]["movies"])
+
+def get_details(movie_id):
+    result = send_request("VideoLibrary.GetMovieDetails", {"properties" : ["trailer", "year"], "movieid" : int(movie_id)})
+    return result["result"]["moviedetails"]
+
+@plugin.route('/videos/<movie_id>')
+def movie_menu(movie_id):
+    details = get_details(movie_id)
+    items = [
+        {'label' : "Play current trailer",
+         'path'  : plugin.url_for('play_trailer', movie_id = movie_id),
+         'is_playable' : True},
+         {'label' : "Choose trailer",
+         'path'  : plugin.url_for('trailer_menu', movie_id = movie_id) }
+        ]
+    return plugin.finish(items)
+
+@plugin.route('/play_trailer/<movie_id>')
+def play_trailer(movie_id):
+    details = get_details(movie_id)
+    trailer = details["trailer"]
+    plugin.log.info("Playing: %s" % trailer)
+    plugin.set_resolved_url(trailer)
+
+@plugin.route('/trailer_menu/<movie_id>')
+def trailer_menu(movie_id):
+    details = get_details(int(movie_id))
+    movie, trailers, clips = scraper.get_videos(clean(details["label"]))
+
+    resolution = __addon__.getSetting("resolution")
+    items = []
+    for trailer in trailers:
+        if resolution in trailer["resolutions"]:
+            items.append(
+            {'label' : trailer["title"],
+             'path'  : plugin.url_for('set_trailer', url = trailer['resolutions'][resolution], movie_id = movie_id, source = trailer['source'])})
+    return plugin.finish(items)
+
+@plugin.route('/set_trailer/<movie_id>/<url>/<source>')
+def set_trailer(movie_id, url, source):
+    if source == "apple.com":
+        url = '%s|User-Agent=QuickTime' % url
+
+    result = send_request('VideoLibrary.SetMovieDetails', {'movieid' : int(movie_id), 'trailer' : url})
+    if "result" in result:
+        if result["result"] == "OK":
+            plugin.log.info("Set trailer for \"%s\" to: %s" % (movie_id, url))
+        else:
+            plugin.log.error("Failed to set trailer for \"%s\" to: %s" % (movie_id, url))
+            plugin.log.error(result)
+    else:
+        plugin.log.error(result["error"])
 
 
-log("Preferred resolution: %s" % resolution)
+    plugin.finish(succeeded=False)
 
 
-movie, trailers, clips = scraper.get_videos(clean(movies[0]["label"]))
 
-for trailer in trailers:
-    if trailer["title"] == "Theatrical Trailer":
-        url = trailer['resolutions'][resolution]
-        log(url)
+
+
+
+
+
+
+
+if __name__ == "__main__":
+    # try:
+        plugin.run()
+    # except scraper.NetworkError:
+        # plugin.notify(msg="Network Error"))
+
+
+
+    # if not sys.argv[2]:
+    #     log("Started")
+    #     root_menu()
+    # else:
+    #     args = parse_qs(sys.argv[2][1:])
+    #     task = int(args[TASK][0])
+    #     log(args)
+    #     if TASKS.ALL == task:
+    #         all_menu()
+    #     elif TASKS.SHOW_MOVIE == task:
+    #         movie_menu(int(args[MOVIE_ID]))
+
+
+#
+
+# movies = send_request("VideoLibrary.GetMovies")["result"]["movies"]
+
+# #resolutions = ["480p", "720p", "1080p"]
+# resolution = __addon__.getSetting("resolution")
+
+
+# log("Preferred resolution: %s" % resolution)
+
+
+# movie, trailers, clips = scraper.get_videos(clean(movies[0]["label"]))
+
+# for trailer in trailers:
+#     if trailer["title"] == "Theatrical Trailer":
+#         url = trailer['resolutions'][resolution]
+#         log(url)
 
