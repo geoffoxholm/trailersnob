@@ -47,6 +47,7 @@ def clean(title):
 
 # Modify the HD Trailers.net scraper to follow redirects
 get_tree_original = scraper.__get_tree
+@plugin.cached()
 def get_tree_new(url, tries = 0):
     print "__get_tree(%s)" % url
 
@@ -68,49 +69,59 @@ scraper.__get_tree = get_tree_new
 def root_menu():
     items = [
         {'label':"All Movies",
-         'path': plugin.url_for('all_menu')}
+         'path': plugin.url_for('all_menu', filter_by = "None")}
         ]
     return plugin.finish(items)
 
-def list_movies(movies):
+def list_movies(movies, filter_by):
     items = []
     for movie in movies:
         items.append( {'label': movie["label"],
-                       'path' : plugin.url_for('movie_menu', movie_id = "%d" % movie[MOVIE_ID])} )
+                       'path' : plugin.url_for('movie_menu',
+                                               movie_id = "%d" % movie[MOVIE_ID],
+                                               filter_by = filter_by)} )
         print movie[MOVIE_ID]
     return plugin.finish(items)
 
-@plugin.route('/all_movies/')
-def all_menu():
-    list_movies(send_request("VideoLibrary.GetMovies")["result"]["movies"])
+@plugin.route('/movies/<filter_by>')
+def all_menu(filter_by):
+    list_movies(send_request("VideoLibrary.GetMovies")["result"]["movies"], filter_by)
 
 def get_details(movie_id):
     result = send_request("VideoLibrary.GetMovieDetails", {"properties" : ["trailer", "year"], "movieid" : int(movie_id)})
     return result["result"]["moviedetails"]
 
-@plugin.route('/videos/<movie_id>')
-def movie_menu(movie_id):
+@plugin.route('/movies/<filter_by>/<movie_id>')
+def movie_menu(filter_by, movie_id):
     details = get_details(movie_id)
     items = [
         {'label' : "Play current trailer",
-         'path'  : plugin.url_for('play_trailer', movie_id = movie_id),
+         'path'  : plugin.url_for('play_trailer',
+                                  movie_id = movie_id,
+                                  filter_by = filter_by),
          'is_playable' : True},
          {'label' : "Choose trailer",
-         'path'  : plugin.url_for('trailer_menu', movie_id = movie_id) }
+         'path'  : plugin.url_for('trailer_menu',
+                                  movie_id = movie_id,
+                                  filter_by = filter_by) }
         ]
     return plugin.finish(items)
 
-@plugin.route('/play_trailer/<movie_id>')
-def play_trailer(movie_id):
+@plugin.route('/movies/<filter_by>/<movie_id>/play')
+def play_trailer(filter_by, movie_id):
     details = get_details(movie_id)
     trailer = details["trailer"]
     plugin.log.info("Playing: %s" % trailer)
     plugin.set_resolved_url(trailer)
 
-@plugin.route('/trailer_menu/<movie_id>')
-def trailer_menu(movie_id):
+@plugin.route('/movies/<filter_by>/<movie_id>/list')
+def trailer_menu(filter_by, movie_id):
     details = get_details(int(movie_id))
-    movie, trailers, clips = scraper.get_videos(clean(details["label"]))
+    try:
+        movie, trailers, clips = scraper.get_videos(clean(details["label"]))
+    except scraper.NetworkError:
+        plugin.notify("No trailers found.")
+        return None
 
     resolution = __addon__.getSetting("resolution")
     items = []
@@ -118,17 +129,18 @@ def trailer_menu(movie_id):
         if resolution in trailer["resolutions"]:
             items.append(
             {'label' : trailer["title"],
-             'path'  : plugin.url_for('set_trailer', url = trailer['resolutions'][resolution], movie_id = movie_id, source = trailer['source'])})
+             'path'  : plugin.url_for('set_trailer', filter_by = filter_by, url = trailer['resolutions'][resolution], movie_id = movie_id, source = trailer['source'])})
     return plugin.finish(items)
 
-@plugin.route('/set_trailer/<movie_id>/<url>/<source>')
-def set_trailer(movie_id, url, source):
+@plugin.route('/movies/<filter_by>/<movie_id>/set_trailer/<url>/<source>')
+def set_trailer(filter_by, movie_id, url, source):
     if source == "apple.com":
         url = '%s|User-Agent=QuickTime' % url
 
     result = send_request('VideoLibrary.SetMovieDetails', {'movieid' : int(movie_id), 'trailer' : url})
     if "result" in result:
         if result["result"] == "OK":
+            plugin.notify(msg='Successfully set trailer')
             plugin.log.info("Set trailer for \"%s\" to: %s" % (movie_id, url))
         else:
             plugin.log.error("Failed to set trailer for \"%s\" to: %s" % (movie_id, url))
@@ -136,8 +148,10 @@ def set_trailer(movie_id, url, source):
     else:
         plugin.log.error(result["error"])
 
+    #plugin.set_resolved_url(plugin.url_for('trailer_menu', filter_by = filter_by, movie_id = movie_id))
+    # plugin.finish(succeeded=False, update_listing = False
 
-    plugin.finish(succeeded=False)
+    return None
 
 
 
