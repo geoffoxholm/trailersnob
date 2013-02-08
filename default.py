@@ -60,11 +60,11 @@ scraper.__get_tree = get_tree_new
 def root_menu():
     items = [{'label':"All movies",
               'path': plugin.url_for('all_menu', filter_by = "None")},
-             {'label':"Movies with no trailer",
+             {'label':"Movies with no trailer set",
               'path': plugin.url_for('all_menu', filter_by = "empty")},
-             {'label':"Movies with missing trailers",
+             {'label':"Movies with dead-link trailers - Slow!",
               'path': plugin.url_for('all_menu', filter_by = "404")},
-             {'label':"Movies with low-resolution trailers",
+             {'label':"Movies with low-resolution trailers - Very Slow!",
               'path': plugin.url_for('all_menu', filter_by = "lame")}]
     return items
 
@@ -94,13 +94,19 @@ def get_all_movie_ids(filter_by):
     movies = get_movies(filter_by)
     return [movie["movieid"] for movie in movies]
 
+
 def get_movies(filter_by):
+
+    def forOhFour(movie):
+        trailer = get_details(movie["movieid"])["trailer"]
+        return trailer != "" and not trailer_exists(trailer)
+
     if filter_by == "None":
         fxn = lambda x : True
     elif filter_by == "empty":
         fxn = lambda x : get_details(x["movieid"])["trailer"] == ""
     elif filter_by == "404":
-        fxn = lambda x : not trailer_exists(get_details(x["movieid"])["trailer"])
+        fxn = forOhFour
 
     movies = send_request("VideoLibrary.GetMovies")["result"]["movies"]
     return filter(fxn, movies)
@@ -109,6 +115,11 @@ def get_movies(filter_by):
 @plugin.route('/movies/<filter_by>')
 def all_menu(filter_by):
     movies = get_movies(filter_by)
+
+    if len(movies) == 0:
+        plugin.notify("None found")
+        return plugin.finish(root_menu(), update_listing = True)
+
     items = [{'label' : "Do for all",
               'path'  : plugin.url_for('movie_menu',
                                        movie_id = "%s|%s" %(DO_FOR_ALL, filter_by))}]
