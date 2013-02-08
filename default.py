@@ -36,24 +36,18 @@ def send_request(method, params = None):
             "id"      : __addonid__}
     if params is not None:
         data["params"] = params
-
-    print json.dumps(data)
-
     return eval(xbmc.executeJSONRPC( json.dumps(data) ))
 
 
 def clean(title):
     return title.replace(" ", "-").lower()
 
-# Modify the HD Trailers.net scraper to follow redirects
+# HACK! Modify the HD Trailers.net scraper to follow redirects
 get_tree_original = scraper.__get_tree
 @plugin.cached()
 def get_tree_new(url, tries = 0):
-    print "__get_tree(%s)" % url
-
     if tries > 2:
         return None
-
     tree = get_tree_original(url)
     result = tree.find("meta", attrs = {"http-equiv":"refresh"})
     if result:
@@ -65,13 +59,18 @@ def get_tree_new(url, tries = 0):
         return tree
 scraper.__get_tree = get_tree_new
 
+
+##
+## -- Beginning of URL handling functions --
+##
+
 @plugin.route('/')
 def root_menu():
     items = [
         {'label':"All Movies",
          'path': plugin.url_for('all_menu', filter_by = "None")}
         ]
-    return plugin.finish(items)
+    return items
 
 def list_movies(movies, filter_by):
     items = []
@@ -81,11 +80,12 @@ def list_movies(movies, filter_by):
                                                movie_id = "%d" % movie[MOVIE_ID],
                                                filter_by = filter_by)} )
         print movie[MOVIE_ID]
-    return plugin.finish(items)
+    return items
+
 
 @plugin.route('/movies/<filter_by>')
 def all_menu(filter_by):
-    list_movies(send_request("VideoLibrary.GetMovies")["result"]["movies"], filter_by)
+    return list_movies(send_request("VideoLibrary.GetMovies")["result"]["movies"], filter_by)
 
 def get_details(movie_id):
     result = send_request("VideoLibrary.GetMovieDetails", {"properties" : ["trailer", "year"], "movieid" : int(movie_id)})
@@ -105,7 +105,7 @@ def movie_menu(filter_by, movie_id):
                                   movie_id = movie_id,
                                   filter_by = filter_by) }
         ]
-    return plugin.finish(items)
+    return items
 
 @plugin.route('/movies/<filter_by>/<movie_id>/play')
 def play_trailer(filter_by, movie_id):
@@ -114,8 +114,7 @@ def play_trailer(filter_by, movie_id):
     plugin.log.info("Playing: %s" % trailer)
     plugin.set_resolved_url(trailer)
 
-@plugin.route('/movies/<filter_by>/<movie_id>/list')
-def trailer_menu(filter_by, movie_id):
+def trailer_menu_items(filter_by, movie_id):
     details = get_details(int(movie_id))
     try:
         movie, trailers, clips = scraper.get_videos(clean(details["label"]))
@@ -130,7 +129,12 @@ def trailer_menu(filter_by, movie_id):
             items.append(
             {'label' : trailer["title"],
              'path'  : plugin.url_for('set_trailer', filter_by = filter_by, url = trailer['resolutions'][resolution], movie_id = movie_id, source = trailer['source'])})
-    return plugin.finish(items)
+    return items
+
+@plugin.route('/movies/<filter_by>/<movie_id>/list')
+def trailer_menu(filter_by, movie_id):
+    return trailer_menu_items(filter_by, movie_id)
+
 
 @plugin.route('/movies/<filter_by>/<movie_id>/set_trailer/<url>/<source>')
 def set_trailer(filter_by, movie_id, url, source):
@@ -148,10 +152,8 @@ def set_trailer(filter_by, movie_id, url, source):
     else:
         plugin.log.error(result["error"])
 
-    #plugin.set_resolved_url(plugin.url_for('trailer_menu', filter_by = filter_by, movie_id = movie_id))
-    # plugin.finish(succeeded=False, update_listing = False
-
-    return None
+    # Go back to trailer menu
+    return plugin.finish(trailer_menu_items(filter_by, movie_id), update_listing = True)
 
 
 
